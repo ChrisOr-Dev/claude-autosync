@@ -13,8 +13,9 @@
 # Create an EMPTY PRIVATE repo on your own GitHub first.
 set -euo pipefail
 
-REPO_URL="${1:-}"
-MEMORY_PROJECT="${2:-$HOME}"
+REPO_URL="${1:-}"; [ $# -gt 0 ] && shift || true
+MEMORY_PROJECT="${1:-$HOME}"; [ $# -gt 0 ] && shift || true
+# any remaining args (e.g. --name api) are forwarded to memory-add.sh
 SYNC_DIR="$HOME/.claude-autosync"
 CLAUDE_DIR="$HOME/.claude"
 TPL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -72,7 +73,7 @@ echo "[OK] CLAUDE.md -> $SYNC_DIR/CLAUDE.md"
 # 5. Add this project's memory in central mode (safe default — never touches the
 #    project repo). For more projects, aliases, or in-project mode, use:
 #      ./scripts/memory-add.sh <project-path> [--mode in-project] [--name <alias>]
-bash "$TPL_DIR/scripts/memory-add.sh" "$MEMORY_PROJECT"
+bash "$TPL_DIR/scripts/memory-add.sh" "$MEMORY_PROJECT" "$@"
 
 # 6. Wire SessionStart (pull) + Stop (push) hooks into settings.json
 if command -v python3 >/dev/null 2>&1; then

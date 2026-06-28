@@ -181,16 +181,19 @@ Before enabling `in-project`, the tool checks the repo's visibility with
 
 ### Same project across machines (central mode)
 
-The default `<name>` is the project's path slug, which differs per machine
-(`/Users/me/api` vs `/home/me/api`). To share one memory folder across machines,
-pass the **same `--name`** everywhere:
+By default the memory folder is named after the project's **basename**, so the
+same project shares one folder across machines even when its absolute path differs
+(`/Users/me/api` and `/home/me/api` both → `memory/api/`). No flag needed for the
+common case.
 
-```bash
-# on every machine, for the same project:
-./scripts/memory-add.sh <that-machine's-path-to-api> --name api
-```
-
-Both then point at `memory/api/` in your private repo — one shared brain.
+Two safeguards:
+- If two **distinct** local projects share a basename, `memory-add.sh` refuses
+  (so their memory can't silently mix) and asks you to pass `--name <unique>`.
+- Pass the **same `--name`** on every machine when you want to force a shared
+  folder regardless of basenames:
+  ```bash
+  ./scripts/memory-add.sh <that-machine's-path-to-api> --name api
+  ```
 
 ## Day-to-day
 
@@ -292,8 +295,11 @@ Your data remains safe in your private repo and in the timestamped backups.
 ## FAQ
 
 **Can two machines conflict?** Pull-on-start / push-on-stop keeps overlap small.
-If a push is rejected, run `sync.sh pull` (it merges) then `sync.sh push`. For
-heavy concurrent editing, sync manually.
+If both machines edit the same file before syncing, `sync.sh pull` detects the
+merge conflict and **aborts automatically** (it never commits conflict markers),
+printing a notice to resolve it manually in `~/.claude-autosync`. Run
+`git pull` / `git mergetool` there to reconcile, then `sync.sh push`. The first
+push also self-configures upstream tracking, so sync works without any git tweaks.
 
 **Does it sync project-local `CLAUDE.md` files?** No — only the global
 `~/.claude/CLAUDE.md`. Memory is added per project via `memory-add.sh`.
@@ -308,6 +314,13 @@ to its own `memory/<name>/` folder in your private repo. In `in-project` mode it
 lives in that project's `claude-memory/`. Either way, projects never mix.
 
 **GitLab / Gitea / self-hosted?** Yes — any git remote URL works.
+
+**Windows support?** `install.ps1` covers the full global sync (CLAUDE.md, hooks,
+and one project's memory in central mode) — symlinks need Developer Mode on or an
+elevated terminal. The richer per-project tooling (`memory-add.sh`: extra
+projects, `--name` aliases, in-project mode, and the public-repo leak guard) is
+currently **bash-only**; on Windows run it under WSL, or stick to the single
+central project that `install.ps1` sets up.
 
 ## License
 

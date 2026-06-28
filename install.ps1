@@ -13,6 +13,9 @@ param(
     [string]$MemoryProject = $env:USERPROFILE
 )
 $ErrorActionPreference = "Stop"
+# Don't let a non-zero git exit (e.g. "no upstream" on first run) abort the
+# whole install on PowerShell 7.4+ where native errors throw by default.
+$PSNativeCommandUseErrorActionPreference = $false
 
 $SyncDir   = Join-Path $env:USERPROFILE ".claude-autosync"
 $ClaudeDir = Join-Path $env:USERPROFILE ".claude"
@@ -56,14 +59,24 @@ if (-not (Test-Path $LocalMd)) {
     Write-Host "[*] Created $LocalMd (edit for machine-specific config)"
 }
 
-# 4. Symlink global CLAUDE.md
+# 4. Symlink global CLAUDE.md. Back up first, but RESTORE the backup if the
+#    symlink fails (no Developer Mode / not elevated) so we never leave the user
+#    without a CLAUDE.md.
 $DestClaude = Join-Path $ClaudeDir "CLAUDE.md"
+$backedUp = $false
 if ((Test-Path $DestClaude) -and -not ((Get-Item $DestClaude).LinkType)) {
     Move-Item $DestClaude "$DestClaude.bak.$Stamp"
+    $backedUp = $true
     Write-Host "[*] Backed up existing CLAUDE.md"
 }
-New-Item -ItemType SymbolicLink -Path $DestClaude -Target $ClaudeMd -Force | Out-Null
-Write-Host "[OK] CLAUDE.md linked"
+try {
+    New-Item -ItemType SymbolicLink -Path $DestClaude -Target $ClaudeMd -Force | Out-Null
+    Write-Host "[OK] CLAUDE.md linked"
+} catch {
+    if ($backedUp) { Move-Item "$DestClaude.bak.$Stamp" $DestClaude }
+    Write-Host "[!] Symlink failed. Enable Developer Mode or run elevated, then re-run."
+    throw
+}
 
 # 5. Symlink this project's memory into its own per-project folder memory\<slug>\
 #    (slug = path with / and \ -> -). Re-run per project to sync each one.

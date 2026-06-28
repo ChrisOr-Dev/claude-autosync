@@ -12,9 +12,10 @@
 # Usage:
 #   memory-add.sh <project-path> [--mode central|in-project] [--name <alias>] [--force-in-project]
 #
-#   --name <alias>        central only: use memory/<alias>/ instead of the path slug,
-#                         so the SAME project on machines with different paths shares
-#                         one folder. Defaults to the path slug.
+#   --name <alias>        central only: name of the memory/<name>/ folder. Defaults
+#                         to the project's basename, so the SAME project on machines
+#                         with different paths shares one folder out of the box. Pass
+#                         --name to disambiguate two distinct projects of the same name.
 #   --force-in-project    allow in-project when repo visibility can't be verified
 #                         (no gh / no remote). Never overrides a confirmed PUBLIC repo.
 set -euo pipefail
@@ -66,9 +67,9 @@ if [ "$MODE" = "in-project" ]; then
             | tr '[:upper:]' '[:lower:]' || true )"
     [ -n "$_v" ] && VIS="$_v"
   fi
-  if [ "$VIS" = "public" ]; then
-    echo "[BLOCKED] $PROJECT is a PUBLIC repo — refusing in-project memory (would leak"
-    echo "          personal notes). Falling back to central mode."
+  if [ "$VIS" = "public" ] || [ "$VIS" = "internal" ]; then
+    echo "[BLOCKED] $PROJECT is a $VIS repo — refusing in-project memory (others can"
+    echo "          read it; would leak personal notes). Falling back to central mode."
     MODE="central"
   elif [ "$VIS" = "unknown" ] && [ "$FORCE" -ne 1 ]; then
     echo "[BLOCKED] Cannot verify repo visibility (no gh, or no remote set)." >&2
@@ -79,8 +80,25 @@ fi
 
 # ── central mode ─────────────────────────────────────────────────────────────
 if [ "$MODE" = "central" ]; then
-  NAME="${NAME:-$SLUG}"
+  # Default name = project basename so the SAME project on different machines
+  # (different absolute paths) shares one folder out of the box. Override --name
+  # to disambiguate when two distinct projects share a basename.
+  NAME="${NAME:-$(basename "$PROJECT")}"
   REPO_MEM="$SYNC_DIR/memory/$NAME"
+
+  # Same-machine collision guard: refuse if another LOCAL project already links
+  # to this folder (would silently merge two projects' memory).
+  for link in "$CLAUDE_DIR"/projects/*/memory; do
+    [ -L "$link" ] || continue
+    [ "$link" = "$MEM_DEST" ] && continue
+    if [ "$(readlink "$link")" = "$REPO_MEM" ]; then
+      echo "ERROR: memory name '$NAME' is already used by another local project:" >&2
+      echo "         $link" >&2
+      echo "       Pass --name <unique> so their memory does not mix." >&2
+      exit 1
+    fi
+  done
+
   if [ ! -d "$REPO_MEM" ]; then
     mkdir -p "$REPO_MEM"
     cp "$TPL_DIR/templates/memory/MEMORY.md" "$REPO_MEM/MEMORY.md"
@@ -92,8 +110,16 @@ if [ "$MODE" = "central" ]; then
     echo "[*] Backed up existing memory -> ${MEM_DEST##*/}.bak.$STAMP"
   fi
   ln -sfn "$REPO_MEM" "$MEM_DEST"
+
+  # If this project was previously in-project, revert its local settings so
+  # Claude stops writing into <project>/claude-memory/.
+  PROJ_SETTINGS="$PROJECT/.claude/settings.local.json"
+  if [ -f "$PROJ_SETTINGS" ]; then
+    python3 "$TPL_DIR/scripts/set-project-memory.py" --unset "$PROJ_SETTINGS" 2>/dev/null || true
+  fi
+
   echo "[OK] central memory: $MEM_DEST -> $REPO_MEM"
-  echo "     (name: $NAME — reuse the same --name on other machines to share it)"
+  echo "     (name: $NAME — same name on other machines = one shared brain)"
   exit 0
 fi
 
@@ -116,7 +142,9 @@ python3 "$TPL_DIR/scripts/set-project-memory.py" "$PROJECT/.claude/settings.loca
 if git -C "$PROJECT" check-ignore -q claude-memory 2>/dev/null; then
   echo "[!] claude-memory/ is gitignored in this project — add '!claude-memory/' to track it."
 fi
-git -C "$PROJECT" add claude-memory/ .claude/settings.local.json 2>/dev/null || true
+# Stage ONLY the memory dir. settings.local.json holds a machine-absolute
+# autoMemoryDirectory and is per-machine local — never commit it.
+git -C "$PROJECT" add claude-memory/ 2>/dev/null || true
 
 echo "[OK] in-project memory: autoMemoryDirectory -> $DEST"
 echo "     A project Stop hook will auto-commit claude-memory/. Push it yourself:"

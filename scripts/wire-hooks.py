@@ -25,7 +25,7 @@ def ensure_hook(settings, event, command):
         for h in entry.get("hooks", []):
             if h.get("command") == command:
                 return False
-    entries.append({"hooks": [{"type": "command", "command": command}]})
+    entries.append({"matcher": "", "hooks": [{"type": "command", "command": command}]})
     return True
 
 
@@ -35,8 +35,8 @@ def main():
     settings = load(settings_path)
 
     changed = False
-    changed |= ensure_hook(settings, "SessionStart", f"{sync_sh} pull")
-    changed |= ensure_hook(settings, "Stop", f"{sync_sh} push")
+    changed |= ensure_hook(settings, "SessionStart", f'"{sync_sh}" pull')
+    changed |= ensure_hook(settings, "Stop", f'"{sync_sh}" push')
 
     if changed:
         if os.path.exists(settings_path):
