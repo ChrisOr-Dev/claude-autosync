@@ -69,26 +69,10 @@ fi
 ln -sf "$SYNC_DIR/CLAUDE.md" "$CLAUDE_DIR/CLAUDE.md"
 echo "[OK] CLAUDE.md -> $SYNC_DIR/CLAUDE.md"
 
-# 5. Symlink this project's memory dir into its own per-project folder.
-#    Claude Code derives the slug by replacing '/' with '-' in the project path.
-#    Each project gets memory/<slug>/ so multiple projects never collide.
-#    Re-run this installer per project to sync each one.
-SLUG="$(printf '%s' "$MEMORY_PROJECT" | sed 's:/:-:g')"
-REPO_MEM="$SYNC_DIR/memory/$SLUG"
-if [ ! -d "$REPO_MEM" ]; then
-  mkdir -p "$REPO_MEM"
-  cp "$TPL_DIR/templates/memory/MEMORY.md" "$REPO_MEM/MEMORY.md"
-fi
-MEM_DEST="$CLAUDE_DIR/projects/$SLUG/memory"
-mkdir -p "$(dirname "$MEM_DEST")"
-if [ -e "$MEM_DEST" ] && [ ! -L "$MEM_DEST" ]; then
-  echo "[*] Merging existing memory into repo (non-destructive)..."
-  cp -n "$MEM_DEST"/*.md "$REPO_MEM/" 2>/dev/null || true
-  mv "$MEM_DEST" "$MEM_DEST.bak.$STAMP"
-  echo "[*] Backed up existing memory -> ${MEM_DEST##*/}.bak.$STAMP"
-fi
-ln -sfn "$REPO_MEM" "$MEM_DEST"
-echo "[OK] memory -> $REPO_MEM  (slug: $SLUG)"
+# 5. Add this project's memory in central mode (safe default — never touches the
+#    project repo). For more projects, aliases, or in-project mode, use:
+#      ./scripts/memory-add.sh <project-path> [--mode in-project] [--name <alias>]
+bash "$TPL_DIR/scripts/memory-add.sh" "$MEMORY_PROJECT"
 
 # 6. Wire SessionStart (pull) + Stop (push) hooks into settings.json
 if command -v python3 >/dev/null 2>&1; then

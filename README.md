@@ -102,18 +102,26 @@ automatically — just pass the path you actually use on that machine.
 Same command, with **that machine's** project path. First machine seeds the repo
 from templates; the rest pull what already exists.
 
-### 5. (Optional) Sync more than one project's memory
-Claude stores memory **per project**. To sync several projects, run the installer
-once per project — each gets its own `memory/<slug>/` folder in your repo, so
-they never mix:
+### 5. (Optional) Add more projects — `memory-add.sh`
+Claude stores memory **per project**. Add each project with `memory-add.sh`,
+which supports two modes. **`central` is the default and is safe for any repo,
+including public ones.**
+
 ```bash
-./install.sh git@github.com:you/my-claude-config.git ~/Projects        # project A
-./install.sh git@github.com:you/my-claude-config.git ~/work/api-server  # project B
+# central (default): memory stays in YOUR private repo, never touches the project
+./scripts/memory-add.sh ~/work/api-server
+
+# central + shared alias: same folder across machines (see "Mixed projects" below)
+./scripts/memory-add.sh ~/work/api-server --name api
+
+# in-project: memory lives in <project>/claude-memory/, travels with the project's
+# own git. Only for PRIVATE repos — refused on public ones.
+./scripts/memory-add.sh ~/work/team-app --mode in-project
 ```
-`CLAUDE.md` (global rules) is shared by all projects; each project keeps its own
-memory. The `<slug>` is just the project's absolute path with `/` → `-`, so the
-same project on another machine (a different absolute path) maps to its own
-folder — run the installer there with that machine's path to link them up.
+
+`CLAUDE.md` (global rules) is always shared by all projects; only memory is
+per-project. See [Mixed public + private projects](#mixed-public--private-projects)
+for how to choose a mode.
 
 ---
 
@@ -135,6 +143,54 @@ Nothing is deleted: existing `CLAUDE.md` and `memory/` are backed up with a
 timestamp suffix.
 
 ---
+
+## Mixed public + private projects
+
+If you work on both **public** repos (open source) and **private** repos, the
+risk is leaking personal memory into a public project. `claude-autosync` is
+**safe by default** and blocks the dangerous case automatically.
+
+### Decision rule (the tool enforces it)
+
+| Project | Repo visibility | Want to share memory with a team? | Mode |
+|---|---|---|---|
+| Open source / public | **public** | — | **central** (in-project is refused) |
+| Personal private | private | no | **central** (default) |
+| Team private | private | yes | `in-project` (opt-in) |
+| Local, no remote | unknown | — | central; `in-project` needs `--force-in-project` |
+
+- **central** (default, safe): memory lives only in **your** private
+  `~/.claude-autosync` repo at `memory/<name>/`, symlinked in. It never writes to
+  the project repo, so a public project can never leak your notes.
+- **in-project** (opt-in): memory lives in `<project>/claude-memory/` and travels
+  with that project's own git via Claude's `autoMemoryDirectory`. Good for sharing
+  curated memory with teammates on a **private** repo.
+
+### Automatic leak guard
+
+Before enabling `in-project`, the tool checks the repo's visibility with
+`gh repo view`:
+
+- **PUBLIC** → refused, automatically falls back to `central` (with a warning).
+- **PRIVATE** → allowed.
+- **Unknown** (no `gh`, or no remote) → refused unless you pass
+  `--force-in-project`. A confirmed PUBLIC repo is never overridable.
+
+> Even on a private repo, remember it could be made public later. When in doubt,
+> use `central` — it is always safe.
+
+### Same project across machines (central mode)
+
+The default `<name>` is the project's path slug, which differs per machine
+(`/Users/me/api` vs `/home/me/api`). To share one memory folder across machines,
+pass the **same `--name`** everywhere:
+
+```bash
+# on every machine, for the same project:
+./scripts/memory-add.sh <that-machine's-path-to-api> --name api
+```
+
+Both then point at `memory/api/` in your private repo — one shared brain.
 
 ## Day-to-day
 
@@ -163,9 +219,14 @@ isn't authenticated) or if a destructive backup decision is ambiguous.
 - `~/.claude/projects/<slug>/memory/` — Claude Code's per-project memory.
   `<slug>` is the project's absolute path with every `/` (and `\` on Windows)
   replaced by `-`. Example: `/Users/alex/Projects` → `-Users-alex-Projects`.
-  We symlink this dir to `~/.claude-autosync/memory/<slug>/` so memory syncs too.
-  Each project has its own folder — to sync multiple projects, run the procedure
-  once per project path.
+  Per-project memory is added with `scripts/memory-add.sh`, which has two modes:
+  - **central** (default, safe): symlink that dir to `~/.claude-autosync/memory/<name>/`.
+    Never touches the project repo — safe for public projects. Use `--name <alias>`
+    to share one folder for the same project across machines.
+  - **in-project** (opt-in): set Claude's `autoMemoryDirectory` to
+    `<project>/claude-memory/` so memory rides the project's own git. Only for
+    **private** repos; `memory-add.sh` refuses it on public repos (verified via
+    `gh repo view`).
 - `~/.claude-autosync/` — fixed, OS-stable clone of the user's **private** repo.
   This is the single source of truth that both symlinks point into.
 - `~/.claude-autosync/local.md` — per-machine, **gitignored**, imported by
@@ -186,12 +247,16 @@ isn't authenticated) or if a destructive backup decision is ambiguous.
 3. **Pick the memory project path.** Default to the user's primary working
    directory (the dir they run Claude from most). The installer derives `<slug>`
    automatically — just pass the real path.
-4. **Run the installer:**
+4. **Run the installer** (sets up CLAUDE.md, hooks, and the first project's memory
+   in safe `central` mode):
    ```bash
    ./install.sh <private-repo-ssh-url> <project-path>
    ```
    It is non-destructive: existing `CLAUDE.md`/`memory` are backed up with a
-   timestamp before being symlinked.
+   timestamp before being symlinked. For each **additional** project, run
+   `./scripts/memory-add.sh <path>`. Only choose `--mode in-project` after
+   confirming that project's repo is **private** — the script enforces this, but
+   default to `central` (always safe) unless the user wants team-shared memory.
 5. **Verify** (all must hold):
    ```bash
    readlink ~/.claude/CLAUDE.md                 # -> ~/.claude-autosync/CLAUDE.md
@@ -231,12 +296,16 @@ If a push is rejected, run `sync.sh pull` (it merges) then `sync.sh push`. For
 heavy concurrent editing, sync manually.
 
 **Does it sync project-local `CLAUDE.md` files?** No — only the global
-`~/.claude/CLAUDE.md`. Memory is synced per project (one `memory/<slug>/` folder
-each); run the installer once per project you want to include.
+`~/.claude/CLAUDE.md`. Memory is added per project via `memory-add.sh`.
 
-**How is per-project memory kept separate?** Each project's memory maps to its
-own `memory/<slug>/` folder in your repo, keyed by the project's path-derived
-slug, so two projects never overwrite each other's memory.
+**Is it safe to use on public/open-source projects?** Yes — the default `central`
+mode keeps memory in your own private repo and never writes to the project. The
+`in-project` mode (which does write into the project) is automatically refused on
+public repos. See [Mixed public + private projects](#mixed-public--private-projects).
+
+**How is per-project memory kept separate?** In `central` mode each project maps
+to its own `memory/<name>/` folder in your private repo. In `in-project` mode it
+lives in that project's `claude-memory/`. Either way, projects never mix.
 
 **GitLab / Gitea / self-hosted?** Yes — any git remote URL works.
 
