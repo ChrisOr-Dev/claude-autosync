@@ -1,0 +1,8 @@
+# This is the PUBLIC tool repo. It must never contain personal data.
+# (Your actual config lives in YOUR OWN private repo, not here.)
+.DS_Store
+*.bak
+*.bak.*
+local.md
+.env
+.env.local

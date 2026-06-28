@@ -1,0 +1,15 @@
+---
+name: user-profile
+description: Who the user is — role, expertise, working preferences
+metadata:
+  type: user
+---
+
+Replace this with a few durable facts about yourself that help the agent across
+all projects. Examples (delete and rewrite):
+
+- Role / expertise: <e.g. backend engineer, comfortable with Go and SQL>
+- Preferred response language: <e.g. English>
+- Working style: <e.g. concise answers, show diffs before applying>
+
+Keep it factual and reusable. Do not store secrets here — this file is synced.

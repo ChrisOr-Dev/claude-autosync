@@ -1,0 +1,17 @@
+# local.md — Machine-specific config (NEVER synced — gitignored)
+#
+# Imported by CLAUDE.md via `@local.md`. Put anything here that differs per
+# machine or must stay private: working directories, SSH hosts, LAN IPs,
+# OS quirks, local tool paths. Copy this file's ideas, delete what you don't use.
+
+## This machine
+- Hostname: <fill-in>
+- OS: <macOS / Linux / WSL / Windows>
+- Primary working directory: <e.g. ~/Projects>
+
+## Remote hosts (examples — replace or delete)
+# - prod-server: ssh user@10.0.0.5 — non-interactive only
+# - nas: ssh user@nas.local
+
+## Local notes / OS quirks
+# - e.g. use `python3` not `python` on this box

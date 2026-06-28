@@ -1,0 +1,8 @@
+# .gitignore for YOUR private config repo (installed as .gitignore in ~/.claude-autosync)
+# Machine-specific and sensitive files that must NEVER sync:
+local.md
+.env
+.env.local
+*.bak
+*.bak.*
+.DS_Store
