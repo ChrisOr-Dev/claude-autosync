@@ -42,10 +42,8 @@ if (Test-Path (Join-Path $SyncDir ".git")) {
 # 2. First-run scaffold from templates
 $ClaudeMd = Join-Path $SyncDir "CLAUDE.md"
 if (-not (Test-Path $ClaudeMd)) {
-    Write-Host "[*] Scaffolding CLAUDE.md + memory from templates..."
+    Write-Host "[*] Scaffolding CLAUDE.md from templates..."
     Copy-Item (Join-Path $TplDir "templates\CLAUDE.md") $ClaudeMd
-    New-Item -ItemType Directory -Force -Path (Join-Path $SyncDir "memory") | Out-Null
-    Copy-Item (Join-Path $TplDir "templates\memory\MEMORY.md") (Join-Path $SyncDir "memory\MEMORY.md")
     Copy-Item (Join-Path $TplDir "templates\private-gitignore") (Join-Path $SyncDir ".gitignore")
 }
 Copy-Item (Join-Path $TplDir "scripts\sync.ps1") (Join-Path $SyncDir "sync.ps1") -Force
@@ -67,18 +65,24 @@ if ((Test-Path $DestClaude) -and -not ((Get-Item $DestClaude).LinkType)) {
 New-Item -ItemType SymbolicLink -Path $DestClaude -Target $ClaudeMd -Force | Out-Null
 Write-Host "[OK] CLAUDE.md linked"
 
-# 5. Symlink memory dir for the chosen project (slug = path with / and \ -> -)
+# 5. Symlink this project's memory into its own per-project folder memory\<slug>\
+#    (slug = path with / and \ -> -). Re-run per project to sync each one.
 $Slug = ($MemoryProject -replace '[\\/]', '-')
+$RepoMem = Join-Path $SyncDir "memory\$Slug"
+if (-not (Test-Path $RepoMem)) {
+    New-Item -ItemType Directory -Force -Path $RepoMem | Out-Null
+    Copy-Item (Join-Path $TplDir "templates\memory\MEMORY.md") (Join-Path $RepoMem "MEMORY.md")
+}
 $MemDest = Join-Path $ClaudeDir "projects\$Slug\memory"
 New-Item -ItemType Directory -Force -Path (Split-Path $MemDest) | Out-Null
 if ((Test-Path $MemDest) -and -not ((Get-Item $MemDest).LinkType)) {
     Get-ChildItem (Join-Path $MemDest "*.md") -ErrorAction SilentlyContinue | ForEach-Object {
-        $t = Join-Path $SyncDir "memory\$($_.Name)"
+        $t = Join-Path $RepoMem $_.Name
         if (-not (Test-Path $t)) { Copy-Item $_.FullName $t }
     }
     Move-Item $MemDest "$MemDest.bak.$Stamp"
 }
-New-Item -ItemType SymbolicLink -Path $MemDest -Target (Join-Path $SyncDir "memory") -Force | Out-Null
+New-Item -ItemType SymbolicLink -Path $MemDest -Target $RepoMem -Force | Out-Null
 Write-Host "[OK] memory linked (slug: $Slug)"
 
 # 6. Wire hooks into settings.json

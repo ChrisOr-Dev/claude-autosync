@@ -20,15 +20,16 @@ brain. `claude-autosync` symlinks both into one git repo and auto-syncs it:
 - **Stop hook** → `git commit && git push` (changes propagate when you finish)
 
 ```
-                 your PRIVATE repo (github.com/you/my-claude-config)
-                 ┌───────────────────────────────────────────────┐
-                 │  CLAUDE.md   memory/   sync.sh   .gitignore     │
-                 └───────────────────────────────────────────────┘
+          your PRIVATE repo (github.com/you/my-claude-config)
+          ┌──────────────────────────────────────────────────────┐
+          │  CLAUDE.md   sync.sh   .gitignore                      │
+          │  memory/<projectA-slug>/   memory/<projectB-slug>/ ... │
+          └──────────────────────────────────────────────────────┘
                     ▲  pull on SessionStart   │ push on Stop
         ┌───────────┴───────────┬─────────────┴───────────┐
    ~/.claude on Mac        ~/.claude on WSL          ~/.claude on Windows
    CLAUDE.md ─┐            CLAUDE.md ─┐              CLAUDE.md ─┐
-   memory/  ──┴─ symlinks  memory/  ──┴─ symlinks   memory/  ──┴─ symlinks
+   memory  ───┴─ symlinks  memory  ──┴─ symlinks    memory  ──┴─ symlinks
    local.md (per-machine, NEVER synced)
 ```
 
@@ -51,9 +52,27 @@ brain. `claude-autosync` symlinks both into one git repo and auto-syncs it:
 
 ## Quick start
 
-### 1. Create your private repo
-On your own GitHub, create a new **empty private** repository, e.g.
-`my-claude-config`. Copy its clone URL (SSH recommended).
+### 1. Create your own private repo
+You need one **empty private** git repo that **you own** — this is where your
+rules and memory live. Pick either way:
+
+**With the `gh` CLI (fastest):**
+```bash
+gh auth login                                   # one-time, if not already
+gh repo create my-claude-config --private --clone=false
+gh repo view my-claude-config --json sshUrl -q .sshUrl    # copy this URL
+```
+
+**With the GitHub website:**
+1. Go to <https://github.com/new>.
+2. Repository name: `my-claude-config` (any name works).
+3. Visibility: select **Private** — this is essential; never make it public.
+4. Leave "Add a README / .gitignore / license" **unchecked** (start empty).
+5. Click **Create repository**, then copy the SSH URL from the green **Code**
+   button, e.g. `git@github.com:you/my-claude-config.git`.
+
+Not on GitHub? Any private git remote works — GitLab, Gitea, or self-hosted.
+SSH URLs are recommended so pushes don't prompt for a password.
 
 ### 2. Get this tool
 ```bash
@@ -83,6 +102,19 @@ automatically — just pass the path you actually use on that machine.
 Same command, with **that machine's** project path. First machine seeds the repo
 from templates; the rest pull what already exists.
 
+### 5. (Optional) Sync more than one project's memory
+Claude stores memory **per project**. To sync several projects, run the installer
+once per project — each gets its own `memory/<slug>/` folder in your repo, so
+they never mix:
+```bash
+./install.sh git@github.com:you/my-claude-config.git ~/Projects        # project A
+./install.sh git@github.com:you/my-claude-config.git ~/work/api-server  # project B
+```
+`CLAUDE.md` (global rules) is shared by all projects; each project keeps its own
+memory. The `<slug>` is just the project's absolute path with `/` → `-`, so the
+same project on another machine (a different absolute path) maps to its own
+folder — run the installer there with that machine's path to link them up.
+
 ---
 
 ## What the installer does
@@ -91,8 +123,9 @@ from templates; the rest pull what already exists.
 2. On first run, scaffolds `CLAUDE.md` + `memory/` from `templates/`.
 3. Symlinks `~/.claude/CLAUDE.md` → `~/.claude-autosync/CLAUDE.md` (backs up any
    existing file first).
-4. Symlinks `~/.claude/projects/<slug>/memory` → `~/.claude-autosync/memory`
-   (merges and backs up any existing memory, non-destructively).
+4. Symlinks `~/.claude/projects/<slug>/memory` → `~/.claude-autosync/memory/<slug>`
+   (merges and backs up any existing memory, non-destructively). Run again with a
+   different project path to add more projects — each gets its own folder.
 5. Creates a per-machine `local.md` (gitignored).
 6. Wires the **SessionStart** (pull) and **Stop** (push) hooks into
    `~/.claude/settings.json` — idempotent, won't duplicate or clobber.
@@ -130,7 +163,9 @@ isn't authenticated) or if a destructive backup decision is ambiguous.
 - `~/.claude/projects/<slug>/memory/` — Claude Code's per-project memory.
   `<slug>` is the project's absolute path with every `/` (and `\` on Windows)
   replaced by `-`. Example: `/Users/alex/Projects` → `-Users-alex-Projects`.
-  We symlink this dir to the repo so memory syncs too.
+  We symlink this dir to `~/.claude-autosync/memory/<slug>/` so memory syncs too.
+  Each project has its own folder — to sync multiple projects, run the procedure
+  once per project path.
 - `~/.claude-autosync/` — fixed, OS-stable clone of the user's **private** repo.
   This is the single source of truth that both symlinks point into.
 - `~/.claude-autosync/local.md` — per-machine, **gitignored**, imported by
@@ -196,7 +231,12 @@ If a push is rejected, run `sync.sh pull` (it merges) then `sync.sh push`. For
 heavy concurrent editing, sync manually.
 
 **Does it sync project-local `CLAUDE.md` files?** No — only the global
-`~/.claude/CLAUDE.md` and one project's memory. That's the cross-machine "brain".
+`~/.claude/CLAUDE.md`. Memory is synced per project (one `memory/<slug>/` folder
+each); run the installer once per project you want to include.
+
+**How is per-project memory kept separate?** Each project's memory maps to its
+own `memory/<slug>/` folder in your repo, keyed by the project's path-derived
+slug, so two projects never overwrite each other's memory.
 
 **GitLab / Gitea / self-hosted?** Yes — any git remote URL works.
 
