@@ -23,7 +23,7 @@ brain. `claude-autosync` symlinks both into one git repo and auto-syncs it:
           your PRIVATE repo (github.com/you/my-claude-config)
           ┌──────────────────────────────────────────────────────┐
           │  CLAUDE.md   sync.sh   .gitignore                      │
-          │  memory/<projectA-slug>/   memory/<projectB-slug>/ ... │
+          │  memory/<projectA-name>/   memory/<projectB-name>/ ... │
           └──────────────────────────────────────────────────────┘
                     ▲  pull on SessionStart   │ push on Stop
         ┌───────────┴───────────┬─────────────┴───────────┐
@@ -131,9 +131,10 @@ for how to choose a mode.
 2. On first run, scaffolds `CLAUDE.md` + `memory/` from `templates/`.
 3. Symlinks `~/.claude/CLAUDE.md` → `~/.claude-autosync/CLAUDE.md` (backs up any
    existing file first).
-4. Symlinks `~/.claude/projects/<slug>/memory` → `~/.claude-autosync/memory/<slug>`
-   (merges and backs up any existing memory, non-destructively). Run again with a
-   different project path to add more projects — each gets its own folder.
+4. Symlinks `~/.claude/projects/<slug>/memory` → `~/.claude-autosync/memory/<name>`
+   (`<name>` defaults to the project basename; merges and backs up any existing
+   memory, non-destructively). Run again with a different project path to add more
+   projects — each gets its own folder.
 5. Creates a per-machine `local.md` (gitignored).
 6. Wires the **SessionStart** (pull) and **Stop** (push) hooks into
    `~/.claude/settings.json` — idempotent, won't duplicate or clobber.
