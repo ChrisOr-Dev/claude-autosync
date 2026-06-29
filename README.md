@@ -1,5 +1,9 @@
 # claude-autosync
 
+![version](https://img.shields.io/badge/version-0.2.0-blue) ![license](https://img.shields.io/badge/license-MIT-green)
+
+> **Version 0.2.0** — check yours with `sync.sh version`. See [CHANGELOG](CHANGELOG.md).
+
 Keep your **Claude Code global rules (`CLAUDE.md`) and memory in sync across all
 your machines** — Mac, Linux, WSL, Windows — through **your own private git repo**.
 
