@@ -2,6 +2,26 @@
 
 All notable changes to claude-autosync. Versions follow [SemVer](https://semver.org/).
 
+## 0.3.0
+
+- **Sync skills & commands (opt-in)**: `scripts/item-sync.sh skill|command`
+  promotes a chosen skill/command into your private repo and symlinks it back.
+  Nothing syncs until you choose it — machine-specific/private items stay local.
+  Interactive checklist on a TTY (`whiptail`/`dialog`, else a zero-dep numbered
+  toggle); promote by name for headless / AI-agent use.
+- **Automatic materialization**: `install.sh` and every `sync.sh pull` symlink
+  whatever skills/commands are already in the repo into `~/.claude/` — new
+  machines receive them with no selection step. Name collisions are backed up to
+  `<name>.local.bak`, never clobbered.
+- **Safe unsync lifecycle**: `--unset <name>` stops syncing but keeps a local
+  copy on every machine (recovered on pull); `--purge <name>` removes it
+  everywhere. Conflicting delete/modify is aborted, never committed.
+- **Observability**: `status --json` now reports `synced_skills` /
+  `synced_commands`; pull receipts note relinked/recovered items.
+- Windows (`sync.ps1`) **receives** synced skills/commands on pull; selection is
+  bash-only (run under WSL).
+- README restructured so **AI-agent autonomous setup is the first section**.
+
 ## 0.2.0
 
 - **Concurrency-safe sync**: a `mkdir` lock serializes parallel sessions (with

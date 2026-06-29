@@ -16,8 +16,10 @@ set -uo pipefail
 export GIT_TERMINAL_PROMPT=0
 : "${GIT_SSH_COMMAND:=ssh -oBatchMode=yes}"; export GIT_SSH_COMMAND
 
-AUTOSYNC_VERSION="0.2.0"
+AUTOSYNC_VERSION="0.3.0"
 DIR="$HOME/.claude-autosync"
+CLAUDE_DIR="$HOME/.claude"
+STAMP="$(date +%Y%m%d%H%M%S)"
 SUBCMD="${1:-pull}"; shift 2>/dev/null || true
 JSON=0; DRY=0
 for a in "$@"; do case "$a" in --json) JSON=1 ;; --dry-run) DRY=1 ;; esac; done
@@ -60,6 +62,67 @@ integrate() {
   return 0
 }
 
+# Materialize synced skills/commands as symlinks into ~/.claude (idempotent).
+# A name that collides with a real local item is backed up, never clobbered.
+_link_dir() {
+  local repo="$1" dest="$2" entry name target
+  [ -d "$repo" ] || return 0
+  mkdir -p "$dest"
+  for entry in "$repo"/*; do
+    [ -e "$entry" ] || continue
+    name="$(basename "$entry")"; target="$dest/$name"
+    if [ -L "$target" ]; then
+      [ "$(readlink "$target")" = "$entry" ] || ln -sfn "$entry" "$target"
+    elif [ -e "$target" ]; then
+      if diff -rq "$entry" "$target" >/dev/null 2>&1; then
+        rm -rf "$target"; ln -sfn "$entry" "$target"
+      else
+        mv "$target" "$target.local.bak.$STAMP"; ln -sfn "$entry" "$target"
+        log "collision: local $name kept as $name.local.bak.$STAMP"
+      fi
+    else
+      ln -sfn "$entry" "$target"
+    fi
+  done
+}
+link_synced_items() {
+  _link_dir "$DIR/skills"   "$CLAUDE_DIR/skills"
+  _link_dir "$DIR/commands" "$CLAUDE_DIR/commands"
+}
+
+# After a pull, an item removed upstream leaves a dangling local symlink. Keep a
+# real local copy (recovered from the pre-pull commit) UNLESS the removal commit
+# was a 'purge:' (then delete it). Only touches symlinks that point into our repo.
+recover_removed() {
+  local prev="$1" new="$2" purged removed type name f out dest
+  [ "$prev" = "$new" ] && return 0
+  purged="$(git log --format='%s' "$prev..$new" 2>/dev/null | sed -n 's/^purge: [a-z]* //p')"
+  removed="$(git diff --name-status "$prev" "$new" -- skills commands 2>/dev/null | awk '$1=="D"{print $2}')"
+  [ -n "$removed" ] || return 0
+  printf '%s\n' "$removed" \
+    | sed -E 's#^skills/([^/]+).*#skill \1#; s#^commands/(.+)\.md$#command \1#' \
+    | sort -u \
+    | while read -r type name; do
+        [ "$type" = skill ] && dest="$CLAUDE_DIR/skills/$name" || dest="$CLAUDE_DIR/commands/$name.md"
+        [ -L "$dest" ] || continue
+        case "$(readlink "$dest")" in "$DIR/"*) ;; *) continue ;; esac
+        if printf '%s\n' $purged | grep -qx "$name"; then
+          rm -rf "$dest" 2>/dev/null || true
+          log "unsynced(purge): removed local $type '$name'"; continue
+        fi
+        rm -f "$dest" 2>/dev/null || true
+        if [ "$type" = skill ]; then
+          for f in $(git ls-tree -r --name-only "$prev" -- "skills/$name" 2>/dev/null); do
+            out="$CLAUDE_DIR/$f"; mkdir -p "$(dirname "$out")"
+            git show "$prev:$f" > "$out" 2>/dev/null || true
+          done
+        else
+          git show "$prev:commands/$name.md" > "$dest" 2>/dev/null || true
+        fi
+        log "unsynced: kept local copy of $type '$name' (no longer shared)"
+      done
+}
+
 do_status() {
   git fetch --quiet origin "$BR" 2>/dev/null || true
   local head rhead ahead=0 behind=0 dirty conflict localonly last
@@ -71,13 +134,16 @@ do_status() {
   [ -n "$(git status --porcelain 2>/dev/null)" ] && dirty=true || dirty=false
   in_conflict && conflict=true || conflict=false
   [ -f "$DIR/local.md" ] && localonly="local.md" || localonly=""
+  local nskills=0 ncmds=0
+  [ -d "$DIR/skills" ]   && nskills="$(find "$DIR/skills"   -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')"
+  [ -d "$DIR/commands" ] && ncmds="$(find "$DIR/commands" -mindepth 1 -maxdepth 1 -name '*.md' 2>/dev/null | wc -l | tr -d ' ')"
   last="$(git log -1 --pretty='%h %s' 2>/dev/null || echo none)"
   if [ "$JSON" -eq 1 ]; then
     last="$(printf '%s' "$last" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')"
-    printf '{"version":"%s","dir":"%s","branch":"%s","head":"%s","remote_head":"%s","ahead":%s,"behind":%s,"dirty":%s,"in_conflict":%s,"local_only":"%s","last_commit":"%s"}\n' \
-      "$AUTOSYNC_VERSION" "$DIR" "$BR" "$head" "$rhead" "${ahead:-0}" "${behind:-0}" "$dirty" "$conflict" "$localonly" "$last"
+    printf '{"version":"%s","dir":"%s","branch":"%s","head":"%s","remote_head":"%s","ahead":%s,"behind":%s,"dirty":%s,"in_conflict":%s,"local_only":"%s","synced_skills":%s,"synced_commands":%s,"last_commit":"%s"}\n' \
+      "$AUTOSYNC_VERSION" "$DIR" "$BR" "$head" "$rhead" "${ahead:-0}" "${behind:-0}" "$dirty" "$conflict" "$localonly" "${nskills:-0}" "${ncmds:-0}" "$last"
   else
-    log "status: v$AUTOSYNC_VERSION branch=$BR head=$head remote=$rhead ahead=${ahead:-0} behind=${behind:-0} dirty=$dirty conflict=$conflict local-only=[$localonly]"
+    log "status: v$AUTOSYNC_VERSION branch=$BR head=$head remote=$rhead ahead=${ahead:-0} behind=${behind:-0} dirty=$dirty conflict=$conflict local-only=[$localonly] skills=$nskills commands=$ncmds"
   fi
 }
 
@@ -90,12 +156,18 @@ case "$SUBCMD" in
     do_status
     ;;
 
+  link)
+    link_synced_items
+    ;;
+
   pull)
     [ "$DRY" -eq 1 ] && { do_status; exit 0; }
     acquire_lock || { log "pull skipped: another sync in progress"; exit 0; }
     PREV="$(git rev-parse --short HEAD 2>/dev/null || echo none)"
     if integrate; then
       NEW="$(git rev-parse --short HEAD 2>/dev/null || echo none)"
+      recover_removed "$PREV" "$NEW"
+      link_synced_items
       if [ "$PREV" = "$NEW" ]; then
         log "pull: up to date at $NEW"
       else
@@ -137,7 +209,7 @@ case "$SUBCMD" in
     ;;
 
   *)
-    log "usage: sync.sh pull|push|status [--json] [--dry-run]"
+    log "usage: sync.sh pull|push|status|link [--json] [--dry-run]"
     exit 1
     ;;
 esac

@@ -6,7 +6,7 @@
 # concurrent sessions; push retries on a non-fast-forward reject (no lost update).
 param([string]$Mode = "pull")
 
-$AutosyncVersion = "0.2.0"
+$AutosyncVersion = "0.3.0"
 # Never let git block a Claude session waiting on a credential prompt.
 $env:GIT_TERMINAL_PROMPT = "0"
 $SyncDir = Join-Path $env:USERPROFILE ".claude-autosync"
@@ -26,6 +26,38 @@ function Integrate {
     if (In-Conflict) { git merge --abort 2>$null; return $false }
     return $true
 }
+# Materialize synced skills/commands into ~/.claude (idempotent), and drop any
+# symlink left dangling by an item removed upstream.
+function Link-SyncedItems {
+    $claude = Join-Path $env:USERPROFILE ".claude"
+    foreach ($sub in @("skills", "commands")) {
+        $repo = Join-Path $SyncDir $sub
+        $dest = Join-Path $claude $sub
+        if (Test-Path $repo) {
+            New-Item -ItemType Directory -Force -Path $dest | Out-Null
+            Get-ChildItem -Force $repo -ErrorAction SilentlyContinue | ForEach-Object {
+                $target = Join-Path $dest $_.Name
+                $cur = Get-Item $target -ErrorAction SilentlyContinue
+                if ($cur -and $cur.LinkType) {
+                    if ($cur.Target -ne $_.FullName) {
+                        Remove-Item $target -Force -Recurse; New-Item -ItemType SymbolicLink -Path $target -Target $_.FullName | Out-Null
+                    }
+                } elseif (Test-Path $target) {
+                    Move-Item $target "$target.local.bak" -Force
+                    New-Item -ItemType SymbolicLink -Path $target -Target $_.FullName | Out-Null
+                } else {
+                    New-Item -ItemType SymbolicLink -Path $target -Target $_.FullName | Out-Null
+                }
+            }
+        }
+        if (Test-Path $dest) {
+            Get-ChildItem -Force $dest -ErrorAction SilentlyContinue |
+                Where-Object { $_.LinkType -and -not (Test-Path $_.Target) } |
+                ForEach-Object { Remove-Item $_.FullName -Force }
+        }
+    }
+}
+
 function Acquire-Lock {
     for ($i = 0; $i -lt 10; $i++) {
         try { New-Item -ItemType Directory -Path $LockDir -ErrorAction Stop | Out-Null; return $true } catch {}
@@ -46,10 +78,11 @@ try {
         Write-Host "claude-autosync: v$AutosyncVersion branch=$br head=$head"
         exit 0
     }
+    if ($Mode -eq "link") { Link-SyncedItems; exit 0 }
     if ($Mode -eq "pull") {
         $weHoldLock = Acquire-Lock
         if (-not $weHoldLock) { Write-Error "claude-autosync: pull skipped (sync in progress)"; exit 0 }
-        if (Integrate) { Write-Host "claude-autosync: pull ok" }
+        if (Integrate) { Link-SyncedItems; Write-Host "claude-autosync: pull ok" }
         else { Write-Error "claude-autosync: pull CONFLICT aborted - resolve in $SyncDir" }
     } elseif ($Mode -eq "push") {
         $weHoldLock = Acquire-Lock

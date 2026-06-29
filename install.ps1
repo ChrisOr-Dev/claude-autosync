@@ -110,6 +110,9 @@ if ($LASTEXITCODE -eq 0) {
     Write-Host "    Stop         -> powershell -File `"$SyncPs`" push"
 }
 
+# 6b. Materialize any skills/commands already chosen for sync on other machines
+& powershell -File $SyncPs link
+
 # 7. Initial push
 & powershell -File $SyncPs push
 

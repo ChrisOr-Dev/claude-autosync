@@ -87,6 +87,9 @@ else
   echo "    Stop         -> $SYNC_DIR/sync.sh push"
 fi
 
+# 6b. Materialize any skills/commands already chosen for sync on other machines
+"$SYNC_DIR/sync.sh" link || true
+
 # 7. Initial push so the private repo has your config
 "$SYNC_DIR/sync.sh" push || true
 
