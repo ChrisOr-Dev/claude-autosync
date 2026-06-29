@@ -91,36 +91,43 @@ link_synced_items() {
 }
 
 # After a pull, an item removed upstream leaves a dangling local symlink. Keep a
-# real local copy (recovered from the pre-pull commit) UNLESS the removal commit
-# was a 'purge:' (then delete it). Only touches symlinks that point into our repo.
+# real local copy (recovered byte-exact from the pre-pull commit via git archive)
+# UNLESS the removal commit was a 'purge:' (then delete it). Only ever touches
+# symlinks that point into our repo. NUL-delimited so names with spaces are safe;
+# if recovery fails the symlink is left untouched (never destroys unique content —
+# it still exists in git history).
 recover_removed() {
-  local prev="$1" new="$2" purged removed type name f out dest
+  local prev="$1" new="$2" purged st path type name dest rel seen="|" key tmp
   [ "$prev" = "$new" ] && return 0
   purged="$(git log --format='%s' "$prev..$new" 2>/dev/null | sed -n 's/^purge: [a-z]* //p')"
-  removed="$(git diff --name-status "$prev" "$new" -- skills commands 2>/dev/null | awk '$1=="D"{print $2}')"
-  [ -n "$removed" ] || return 0
-  printf '%s\n' "$removed" \
-    | sed -E 's#^skills/([^/]+).*#skill \1#; s#^commands/(.+)\.md$#command \1#' \
-    | sort -u \
-    | while read -r type name; do
-        [ "$type" = skill ] && dest="$CLAUDE_DIR/skills/$name" || dest="$CLAUDE_DIR/commands/$name.md"
-        [ -L "$dest" ] || continue
-        case "$(readlink "$dest")" in "$DIR/"*) ;; *) continue ;; esac
-        if printf '%s\n' $purged | grep -qx "$name"; then
-          rm -rf "$dest" 2>/dev/null || true
-          log "unsynced(purge): removed local $type '$name'"; continue
-        fi
-        rm -f "$dest" 2>/dev/null || true
-        if [ "$type" = skill ]; then
-          for f in $(git ls-tree -r --name-only "$prev" -- "skills/$name" 2>/dev/null); do
-            out="$CLAUDE_DIR/$f"; mkdir -p "$(dirname "$out")"
-            git show "$prev:$f" > "$out" 2>/dev/null || true
-          done
-        else
-          git show "$prev:commands/$name.md" > "$dest" 2>/dev/null || true
-        fi
-        log "unsynced: kept local copy of $type '$name' (no longer shared)"
-      done
+  while IFS= read -r -d '' st && IFS= read -r -d '' path; do
+    [ "$st" = "D" ] || continue
+    case "$path" in
+      skills/*)   name="${path#skills/}"; name="${name%%/*}"; type="skill";   rel="skills/$name";      dest="$CLAUDE_DIR/skills/$name" ;;
+      commands/*) name="${path#commands/}"; name="${name%.md}"; type="command"; rel="commands/$name.md"; dest="$CLAUDE_DIR/commands/$name.md" ;;
+      *) continue ;;
+    esac
+    key="$type/$name"
+    case "$seen" in *"|$key|"*) continue ;; esac
+    seen="$seen$key|"
+    [ -L "$dest" ] || continue
+    case "$(readlink "$dest")" in "$DIR/"*) ;; *) continue ;; esac
+    if printf '%s\n' "$purged" | grep -Fqx "$name"; then
+      rm -rf "$dest" 2>/dev/null || true
+      log "unsynced(purge): removed local $type '$name'"; continue
+    fi
+    tmp="${TMPDIR:-/tmp}/claude-autosync-recover.$$"
+    rm -rf "$tmp" 2>/dev/null || true; mkdir -p "$tmp"
+    git archive "$prev" "$rel" 2>/dev/null | ( cd "$tmp" && tar -x 2>/dev/null )
+    if [ -e "$tmp/$rel" ]; then
+      rm -rf "$dest" 2>/dev/null || true
+      mkdir -p "$(dirname "$dest")"; mv "$tmp/$rel" "$dest"
+      log "unsynced: kept local copy of $type '$name' (no longer shared)"
+    else
+      log "unsynced: could not recover $type '$name' — left as-is (still in git history)"
+    fi
+    rm -rf "$tmp" 2>/dev/null || true
+  done < <(git diff -z --no-renames --name-status "$prev" "$new" -- skills commands 2>/dev/null)
 }
 
 do_status() {

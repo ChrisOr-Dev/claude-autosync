@@ -63,7 +63,7 @@ list_local_only() {
   done
 }
 
-in_list() { printf '%s\n' "$1" | grep -qx "$2"; }
+in_list() { printf '%s\n' "$1" | grep -Fqx "$2"; }
 
 # ── promote: move a local item into the repo and symlink it back ──────────────
 promote() {
@@ -173,7 +173,7 @@ checklist() {
       case "$n" in *[!0-9]*|"") continue ;; esac
       [ "$n" -ge 1 ] && [ "$n" -le "${#names[@]}" ] || continue
       name="${names[$((n-1))]}"
-      if in_list "$cur" "$name"; then cur="$(printf '%s\n' $cur | grep -vx "$name")"
+      if in_list "$cur" "$name"; then cur="$(printf '%s\n' $cur | grep -Fvx "$name")"
       else cur="$(printf '%s\n%s\n' "$cur" "$name")"; fi
     done
     desired="$cur"

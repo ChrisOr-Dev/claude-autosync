@@ -10,6 +10,7 @@ $AutosyncVersion = "0.3.0"
 # Never let git block a Claude session waiting on a credential prompt.
 $env:GIT_TERMINAL_PROMPT = "0"
 $SyncDir = Join-Path $env:USERPROFILE ".claude-autosync"
+$Stamp = Get-Date -Format "yyyyMMddHHmmss"
 if (-not (Test-Path (Join-Path $SyncDir ".git"))) { exit 0 }
 Set-Location $SyncDir
 $LockDir = Join-Path $SyncDir ".sync.lock"
@@ -26,35 +27,74 @@ function Integrate {
     if (In-Conflict) { git merge --abort 2>$null; return $false }
     return $true
 }
-# Materialize synced skills/commands into ~/.claude (idempotent), and drop any
-# symlink left dangling by an item removed upstream.
+# Materialize synced skills/commands into ~/.claude (idempotent). A name that
+# collides with a real local item is backed up (timestamped), never clobbered.
+# Removal of an item upstream is handled by Recover-Removed, not here.
 function Link-SyncedItems {
     $claude = Join-Path $env:USERPROFILE ".claude"
     foreach ($sub in @("skills", "commands")) {
         $repo = Join-Path $SyncDir $sub
         $dest = Join-Path $claude $sub
-        if (Test-Path $repo) {
-            New-Item -ItemType Directory -Force -Path $dest | Out-Null
-            Get-ChildItem -Force $repo -ErrorAction SilentlyContinue | ForEach-Object {
-                $target = Join-Path $dest $_.Name
-                $cur = Get-Item $target -ErrorAction SilentlyContinue
-                if ($cur -and $cur.LinkType) {
-                    if ($cur.Target -ne $_.FullName) {
-                        Remove-Item $target -Force -Recurse; New-Item -ItemType SymbolicLink -Path $target -Target $_.FullName | Out-Null
-                    }
-                } elseif (Test-Path $target) {
-                    Move-Item $target "$target.local.bak" -Force
-                    New-Item -ItemType SymbolicLink -Path $target -Target $_.FullName | Out-Null
-                } else {
-                    New-Item -ItemType SymbolicLink -Path $target -Target $_.FullName | Out-Null
+        if (-not (Test-Path $repo)) { continue }
+        New-Item -ItemType Directory -Force -Path $dest | Out-Null
+        Get-ChildItem -Force $repo -ErrorAction SilentlyContinue | ForEach-Object {
+            $target = Join-Path $dest $_.Name
+            $cur = Get-Item $target -ErrorAction SilentlyContinue
+            if ($cur -and $cur.LinkType) {
+                if ($cur.Target -ne $_.FullName) {
+                    Remove-Item $target -Force -Recurse; New-Item -ItemType SymbolicLink -Path $target -Target $_.FullName | Out-Null
                 }
+            } elseif (Test-Path $target) {
+                Move-Item $target "$target.local.bak.$Stamp" -Force
+                New-Item -ItemType SymbolicLink -Path $target -Target $_.FullName | Out-Null
+                Write-Error "claude-autosync: collision: local $($_.Name) kept as $($_.Name).local.bak.$Stamp"
+            } else {
+                New-Item -ItemType SymbolicLink -Path $target -Target $_.FullName | Out-Null
             }
         }
-        if (Test-Path $dest) {
-            Get-ChildItem -Force $dest -ErrorAction SilentlyContinue |
-                Where-Object { $_.LinkType -and -not (Test-Path $_.Target) } |
-                ForEach-Object { Remove-Item $_.FullName -Force }
+    }
+}
+
+# Mirror of bash recover_removed: an item removed upstream leaves a dangling
+# symlink. If its removal commit was a 'purge:' delete it; otherwise recover a
+# byte-exact local copy from the pre-pull commit (git archive -> tar). Only ever
+# touches OUR symlinks (pointing into $SyncDir). If recovery fails, the symlink is
+# left untouched (never destroys unique content - it remains in git history).
+function Recover-Removed($prev, $new) {
+    if ($prev -eq $new) { return }
+    $claude = Join-Path $env:USERPROFILE ".claude"
+    $purged = @(git log --format='%s' "$prev..$new" 2>$null |
+        ForEach-Object { if ($_ -match '^purge: [a-z]+ (.+)$') { $matches[1] } })
+    $raw = (git diff --no-renames --name-status -z "$prev" "$new" -- skills commands 2>$null) -join "`n"
+    $fields = $raw -split "`0" | Where-Object { $_ -ne "" }
+    $seen = @{}
+    for ($i = 0; ($i + 1) -lt $fields.Count; $i += 2) {
+        if ($fields[$i] -ne "D") { continue }
+        $path = $fields[$i + 1]
+        if ($path -like "skills/*") {
+            $name = (($path -replace '^skills/', '') -split '/')[0]; $type = "skill"
+            $rel = "skills/$name"; $dest = Join-Path $claude ("skills\" + $name)
+        } elseif ($path -like "commands/*") {
+            $name = ($path -replace '^commands/', '') -replace '\.md$', ''; $type = "command"
+            $rel = "commands/$name.md"; $dest = Join-Path $claude ("commands\" + $name + ".md")
+        } else { continue }
+        $key = "$type/$name"; if ($seen[$key]) { continue }; $seen[$key] = $true
+        $cur = Get-Item $dest -ErrorAction SilentlyContinue
+        if (-not ($cur -and $cur.LinkType)) { continue }       # only act on a symlink...
+        if ($cur.Target -notlike "$SyncDir*") { continue }     # ...that points into our repo
+        if ($purged -contains $name) { Remove-Item $dest -Force -Recurse -ErrorAction SilentlyContinue; continue }
+        $tmp = Join-Path $env:TEMP ("cas-recover-" + [System.Guid]::NewGuid().ToString("N"))
+        New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+        $arc = "$tmp.tar"
+        git archive -o $arc "$prev" "$rel" 2>$null            # -o avoids the binary-corrupting PS pipe
+        if (Test-Path $arc) { & tar -x -f $arc -C $tmp 2>$null; Remove-Item $arc -Force -ErrorAction SilentlyContinue }
+        $src = Join-Path $tmp ($rel -replace '/', '\')
+        if (Test-Path $src) {
+            Remove-Item $dest -Force -Recurse -ErrorAction SilentlyContinue
+            New-Item -ItemType Directory -Force -Path (Split-Path $dest) | Out-Null
+            Move-Item $src $dest -Force
         }
+        Remove-Item $tmp -Force -Recurse -ErrorAction SilentlyContinue
     }
 }
 
@@ -82,7 +122,13 @@ try {
     if ($Mode -eq "pull") {
         $weHoldLock = Acquire-Lock
         if (-not $weHoldLock) { Write-Error "claude-autosync: pull skipped (sync in progress)"; exit 0 }
-        if (Integrate) { Link-SyncedItems; Write-Host "claude-autosync: pull ok" }
+        $prev = (git rev-parse --short HEAD 2>$null)
+        if (Integrate) {
+            $new = (git rev-parse --short HEAD 2>$null)
+            Recover-Removed $prev $new
+            Link-SyncedItems
+            Write-Host "claude-autosync: pull ok"
+        }
         else { Write-Error "claude-autosync: pull CONFLICT aborted - resolve in $SyncDir" }
     } elseif ($Mode -eq "push") {
         $weHoldLock = Acquire-Lock
