@@ -12,6 +12,10 @@
 # non-fast-forward reject by integrating the remote first (no lost updates).
 set -uo pipefail
 
+# Never let git block a Claude session waiting on a credential prompt.
+export GIT_TERMINAL_PROMPT=0
+: "${GIT_SSH_COMMAND:=ssh -oBatchMode=yes}"; export GIT_SSH_COMMAND
+
 AUTOSYNC_VERSION="0.2.0"
 DIR="$HOME/.claude-autosync"
 SUBCMD="${1:-pull}"; shift 2>/dev/null || true
@@ -69,8 +73,9 @@ do_status() {
   [ -f "$DIR/local.md" ] && localonly="local.md" || localonly=""
   last="$(git log -1 --pretty='%h %s' 2>/dev/null || echo none)"
   if [ "$JSON" -eq 1 ]; then
+    last="$(printf '%s' "$last" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')"
     printf '{"version":"%s","dir":"%s","branch":"%s","head":"%s","remote_head":"%s","ahead":%s,"behind":%s,"dirty":%s,"in_conflict":%s,"local_only":"%s","last_commit":"%s"}\n' \
-      "$AUTOSYNC_VERSION" "$DIR" "$BR" "$head" "$rhead" "${ahead:-0}" "${behind:-0}" "$dirty" "$conflict" "$localonly" "$(printf '%s' "$last" | sed 's/"/\\"/g')"
+      "$AUTOSYNC_VERSION" "$DIR" "$BR" "$head" "$rhead" "${ahead:-0}" "${behind:-0}" "$dirty" "$conflict" "$localonly" "$last"
   else
     log "status: v$AUTOSYNC_VERSION branch=$BR head=$head remote=$rhead ahead=${ahead:-0} behind=${behind:-0} dirty=$dirty conflict=$conflict local-only=[$localonly]"
   fi
@@ -112,21 +117,21 @@ case "$SUBCMD" in
       git commit -q -m "sync: ${HOST} $(date +%Y-%m-%dT%H:%M:%S)" 2>/dev/null || true
     fi
     # push; on a non-fast-forward reject, integrate remote and retry (no lost update)
-    pushed=0
+    pushed=0; conflict_hit=0
     for attempt in 1 2 3; do
       if git push --quiet 2>/dev/null || git push -u origin "$BR" --quiet 2>/dev/null; then
         pushed=1; break
       fi
       if ! integrate; then
         log "push: CONFLICT while integrating remote — aborted; resolve manually in $DIR"
-        break
+        conflict_hit=1; break
       fi
     done
     AUTH="$(git rev-parse --short HEAD 2>/dev/null || echo none)"
-    OMIT="none"; { [ -f "$DIR/local.md" ] && ! printf '%s' "$STAGED" | grep -q 'local.md'; } && OMIT="local.md"
+    OMIT="none"; { [ -f "$DIR/local.md" ] && ! printf '%s\n' $STAGED | grep -qx 'local.md'; } && OMIT="local.md"
     if [ "$pushed" -eq 1 ]; then
       log "push: ok; authoritative=$AUTH; staged=[${STAGED:-none}]; kept-local=[$OMIT]"
-    else
+    elif [ "$conflict_hit" -eq 0 ]; then
       log "push: FAILED after retries; local commits at $AUTH (will retry next session)"
     fi
     ;;

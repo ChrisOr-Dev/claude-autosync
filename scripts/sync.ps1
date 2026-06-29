@@ -7,6 +7,8 @@
 param([string]$Mode = "pull")
 
 $AutosyncVersion = "0.2.0"
+# Never let git block a Claude session waiting on a credential prompt.
+$env:GIT_TERMINAL_PROMPT = "0"
 $SyncDir = Join-Path $env:USERPROFILE ".claude-autosync"
 if (-not (Test-Path (Join-Path $SyncDir ".git"))) { exit 0 }
 Set-Location $SyncDir
@@ -27,8 +29,11 @@ function Integrate {
 function Acquire-Lock {
     for ($i = 0; $i -lt 10; $i++) {
         try { New-Item -ItemType Directory -Path $LockDir -ErrorAction Stop | Out-Null; return $true } catch {}
-        $age = (Get-Date) - (Get-Item $LockDir).CreationTime
-        if ($age.TotalMinutes -gt 2) { Remove-Item $LockDir -Force -Recurse 2>$null; continue }
+        # steal a stale lock (>2 min); tolerate it vanishing mid-check
+        try {
+            $age = (Get-Date) - (Get-Item $LockDir -ErrorAction Stop).CreationTime
+            if ($age.TotalMinutes -gt 2) { Remove-Item $LockDir -Force -Recurse -ErrorAction SilentlyContinue; continue }
+        } catch { continue }
         Start-Sleep -Milliseconds 500
     }
     return $false

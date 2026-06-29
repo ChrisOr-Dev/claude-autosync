@@ -226,6 +226,8 @@ Sync is **fail-open** (a hiccup never blocks your session) but **not fail-silent
   first — so a second machine's push can't silently lose your changes.
 - Merge conflicts are **aborted**, never committed; resolve them in
   `~/.claude-autosync` and run `sync.sh push`.
+- Git is run with `GIT_TERMINAL_PROMPT=0` (and SSH batch mode), so a missing
+  credential fails fast instead of hanging your session on a password prompt.
 
 ---
 

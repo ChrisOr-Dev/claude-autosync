@@ -6,3 +6,4 @@ local.md
 *.bak
 *.bak.*
 .DS_Store
+.sync.lock/
