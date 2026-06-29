@@ -27,7 +27,8 @@ if [ -z "$REPO_URL" ]; then
   exit 1
 fi
 
-echo "=== claude-autosync install ==="
+AUTOSYNC_VERSION="$(cat "$TPL_DIR/VERSION" 2>/dev/null || echo dev)"
+echo "=== claude-autosync install (v$AUTOSYNC_VERSION) ==="
 echo "  private repo : $REPO_URL"
 echo "  sync dir     : $SYNC_DIR"
 echo "  memory for   : $MEMORY_PROJECT"

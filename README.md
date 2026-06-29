@@ -200,14 +200,32 @@ Two safeguards:
 
 You don't run anything manually. Edit rules in `~/.claude/CLAUDE.md` or let
 Claude write memory as usual — the hooks push on Stop and pull on the next
-SessionStart. To sync by hand:
+SessionStart. To sync or inspect by hand:
 
 ```bash
-~/.claude-autosync/sync.sh push    # commit + push now
-~/.claude-autosync/sync.sh pull    # pull latest now
+~/.claude-autosync/sync.sh push           # commit + push now
+~/.claude-autosync/sync.sh pull           # pull latest now
+~/.claude-autosync/sync.sh status --json  # read-only: what would sync, without changing anything
+~/.claude-autosync/sync.sh version        # print the tool version
 ```
 
 Put machine-specific or private bits in `~/.claude-autosync/local.md`.
+
+### Receipts, concurrency, and verification
+
+Sync is **fail-open** (a hiccup never blocks your session) but **not fail-silent**:
+
+- Every `pull`/`push` prints a one-line **receipt** to stderr — which commit
+  rules loaded from, files changed, what stayed local, or why a sync aborted.
+  This catches the two scary failures: stale rules silently winning, and personal
+  memory silently becoming shared.
+- `status --json` is read-only — Claude or you can verify state (ahead/behind,
+  dirty, conflict, `local_only`, current commit) **without** mutating anything.
+- A lock serializes concurrent sessions on one machine (no `index.lock` races),
+  and `push` **retries on a non-fast-forward reject** by integrating the remote
+  first — so a second machine's push can't silently lose your changes.
+- Merge conflicts are **aborted**, never committed; resolve them in
+  `~/.claude-autosync` and run `sync.sh push`.
 
 ---
 
@@ -263,11 +281,13 @@ isn't authenticated) or if a destructive backup decision is ambiguous.
    default to `central` (always safe) unless the user wants team-shared memory.
 5. **Verify** (all must hold):
    ```bash
+   ~/.claude-autosync/sync.sh status --json     # read-only state: branch/head/ahead/behind/conflict/local_only
    readlink ~/.claude/CLAUDE.md                 # -> ~/.claude-autosync/CLAUDE.md
-   readlink ~/.claude/projects/<slug>/memory    # -> ~/.claude-autosync/memory
+   readlink ~/.claude/projects/<slug>/memory    # -> ~/.claude-autosync/memory/<name>
    python3 -c "import json;h=json.load(open('$HOME/.claude/settings.json'))['hooks'];print('SessionStart' in h and 'Stop' in h)"
-   git -C ~/.claude-autosync log --oneline -1   # initial push exists
    ```
+   Parse the `status --json` output to confirm the push landed (`ahead` is 0,
+   `in_conflict` is false) and that `local_only` lists `local.md` (kept private).
 6. **Tell the user** what changed: secrets and machine-specific paths belong in
    `~/.claude-autosync/local.md` (never synced); the synced repo must stay
    private. On any other machine, re-run step 4 with that machine's project path.
